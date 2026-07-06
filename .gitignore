@@ -1,0 +1,66 @@
+# ============================================
+# JARVIS Assistant - .gitignore
+# ============================================
+
+# === 虚拟环境与依赖 ===
+node_modules/
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# === 环境变量与密钥（绝不提交）===
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# === 模型文件与权重（体积过大，按需下载）===
+backend/asset/
+GPT&SoVITs_weights_v2Pro/
+.chroma/
+*.bin
+*.pt
+*.safetensors
+*.onnx
+*.ckpt
+*.pth
+
+# === 编译产物 ===
+frontend/src-tauri/target/
+frontend/dist/
+backend/build/
+backend/dist/
+*.exe
+*.dll
+
+# === 用户选择排除的目录 ===
+Demo/
+rvcmd_windows_amd64/
+
+# === 数据库与日志 ===
+backend/data/
+backend/gpt_sovits_*.txt
+*.wav
+*.mp3
+
+# === IDE 与编辑器 ===
+.trae/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# === 操作系统文件 ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === 日志与临时文件 ===
+*.log
+*.tmp
+*.bak
+*.cache

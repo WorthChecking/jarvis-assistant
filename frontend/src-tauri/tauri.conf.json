@@ -1,0 +1,38 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devPath": "http://localhost:1420",
+    "distDir": "../dist"
+  },
+  "package": {
+    "productName": "Jarvis Assistant",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "shell": { "all": false, "open": true }
+    },
+    "bundle": {
+      "active": true,
+      "identifier": "com.jarvis.assistant",
+      "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"]
+    },
+    "security": { "csp": null },
+    "windows": [
+      {
+        "label": "main",
+        "title": "Jarvis Assistant",
+        "width": 500,
+        "height": 500,
+        "decorations": false,
+        "transparent": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "center": true
+      }
+    ]
+  }
+}

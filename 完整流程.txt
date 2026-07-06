@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI State Visualizer (V3 - Hybrid Organic & Orbit)</title>
+    <!-- 加载 Three.js 核心库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000000; /* 纯黑背景以凸显流光 */
+            color: #fff;
+            font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden; /* 防止滚动条出现 */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+        }
+
+        /* --- 调试控制面板 --- */
+        #controls-panel {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            background: rgba(20, 20, 25, 0.6);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            padding: 20px 30px;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            width: 80%;
+            max-width: 600px;
+        }
+
+        .control-group { display: flex; flex-direction: column; gap: 8px; }
+        .label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #aaa; font-weight: 600; }
+        .btn-group { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+
+        .state-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            padding: 10px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 14px;
+            font-weight: 500;
+            flex: 1;
+            min-width: 100px;
+        }
+
+        .state-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: rgba(255, 255, 255, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .state-btn.active {
+            background: linear-gradient(135deg, rgba(0, 255, 255, 0.2), rgba(0, 150, 255, 0.2));
+            border-color: #00ffff;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
+            font-weight: bold;
+        }
+        
+        .state-btn.active.warm {
+            background: linear-gradient(135deg, rgba(255, 165, 0, 0.2), rgba(255, 69, 0, 0.2));
+            border-color: #ffa500;
+            box-shadow: 0 0 15px rgba(255, 165, 0, 0.3);
+        }
+
+        .slider-container { display: flex; align-items: center; gap: 15px; }
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px; width: 16px; border-radius: 50%; background: #fff;
+            cursor: pointer; margin-top: -6px; box-shadow: 0 0 5px rgba(0,0,0,0.5);
+            transition: transform 0.1s;
+        }
+        input[type=range]:active::-webkit-slider-thumb { transform: scale(1.2); }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: rgba(255, 255, 255, 0.2); border-radius: 2px; }
+        input[type=range]:focus { outline: none; }
+        #volume-display { font-variant-numeric: tabular-nums; min-width: 40px; text-align: right; font-weight: bold; color: #00ffff; }
+        
+        /* 承载 Three.js 的容器 */
+        #canvas-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1; }
+    </style>
+</head>
+<body>
+    <!-- 模拟 Vue 前端收到的状态切换与音量数据 -->
+    <div id="controls-panel">
+        <div class="control-group">
+            <div class="label">Assistant State (状态码映射)</div>
+            <div class="btn-group">
+                <button class="state-btn active" data-state="0">待机 (Standby)</button>
+                <button class="state-btn" data-state="1">聆听 (Listening)</button>
+                <button class="state-btn" data-state="2">处理中 (Processing)</button>
+                <button class="state-btn" data-state="3">播报 (Speaking)</button>
+            </div>
+        </div>
+        <div class="control-group">
+            <div class="label">Simulated Volume (模拟麦克风/TTS音量)</div>
+            <div class="slider-container">
+                <input type="range" id="volume-slider" min="0" max="100" value="0">
+                <span id="volume-display">0</span>
+            </div>
+        </div>
+    </div>
+    
+    <div id="canvas-container"></div>
+
+    <script>
+        const STAGES = { STANDBY: 0, LISTENING: 1, PROCESSING: 2, SPEAKING: 3 };
+        let currentState = STAGES.STANDBY;
+        let simulatedVolume = 0; // 范围 0.0 ~ 1.0
+
+        // 色彩定义 (Three.js Color 对象)
+        const COLOR_COOL = new THREE.Color(0x00ffff); // 赛博蓝
+        const COLOR_WARM = new THREE.Color(0xffa500); // 橘黄色
+        let targetHue = COLOR_COOL;
+
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        // 增加一点雾效，让远处的粒子自然变暗
+        scene.fog = new THREE.FogExp2(0x000000, 0.012);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 1000);
+        camera.position.z = 65;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: false });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        
+        // 核心：模拟 Canvas 2D 的 "流光残影" (Motion Blur)
+        // 在 WebGL 中，我们可以通过设置 autoClear = false，并在每帧手动绘制一个带半透明度的黑色平面来覆盖旧画面
+        renderer.autoClearColor = false; 
+        
+        container.appendChild(renderer.domElement);
+
+        // 处理窗口缩放
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // 用于产生残影的渐隐平面
+        const fadeMaterial = new THREE.MeshBasicMaterial({
+            color: 0x000000,
+            transparent: true,
+            opacity: 0.15, // 控制拖尾长度，越小拖尾越长
+            depthTest: false
+        });
+        const fadePlane = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), fadeMaterial);
+        fadePlane.position.z = -100; // 放到最后面
+        const fadeScene = new THREE.Scene();
+        fadeScene.add(fadePlane);
+
+        //        // 性能红线：一次性创建 4000 个粒子，后续严禁 new 对象
+        const PARTICLE_COUNT = 4000;
+        const positions = new Float32Array(PARTICLE_COUNT * 3);
+        const colors = new Float32Array(PARTICLE_COUNT * 3);
+        const sizes = new Float32Array(PARTICLE_COUNT);
+        
+        // 记录每个粒子的初始数学特征，用于各种状态下的计算
+        const particleData = [];
+
+        // 使用斐波那契球面算法 (Fibonacci sphere) 均匀分布初始球面粒子
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const i3 = i * 3;
+            
+            // 1. 球面分布参数 (用于 State 0, 1, 3 的有机体)
+            const phi = Math.acos(1 - 2 * (i + 0.5) / PARTICLE_COUNT);
+            const theta = Math.PI * (1 + Math.sqrt(5)) * (i + 0.5);
+            
+            // 2. 环绕轨道参数 (用于 State 2 的卫星错落系统)
+            // 将 4000 个粒子分摊到 10 个不同的倾斜轨道环上
+            const orbitRingId = Math.floor(Math.random() * 10); 
+            // 随机生成轨道的 X 轴和 Z 轴倾角，形成错落感
+            const tiltX = (orbitRingId * Math.PI) / 3 + (Math.random() * 0.4 - 0.2); 
+            const tiltZ = (orbitRingId * Math.PI) / 5 + (Math.random() * 0.4 - 0.2);
+            // 轨道半径：内圈小，外圈大
+            const orbitRadius = 12 + (orbitRingId * 3.5) + Math.random() * 1.5;
+            // 粒子在圆周上的初始角度
+            const orbitAngle = Math.random() * Math.PI * 2;
+
+            particleData.push({
+                index: i,
+                
+                // 有机形态属性
+                spherePhi: phi,
+                sphereTheta: theta,
+                baseRadius: 3.5 + Math.random() * 1.5, // 核心半径略有不齐
+                
+                // 轨道形态属性
+                ringId: orbitRingId,
+                orbitRadius: orbitRadius,
+                tiltX: tiltX,
+                tiltZ: tiltZ,
+                currentOrbitAngle: orbitAngle,
+                // 不同轨道的速度不同，产生交错差速感
+                orbitSpeed: 0.6 + (Math.random() * 0.4) + (orbitRingId * 0.08),
+                
+                // 噪点偏移量，让每个粒子的跳动有差异
+                noiseOffset: Math.random() * 100,
+            });
+
+            // 初始化属性
+            positions[i3] = 0; positions[i3+1] = 0; positions[i3+2] = 0;
+            colors[i3] = COLOR_COOL.r; colors[i3+1] = COLOR_COOL.g; colors[i3+2] = COLOR_COOL.b;
+            sizes[i] = 1.0;
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+        // 自定义着色器：实现 Lighter (Bloom) 和透视缩放
+        const shaderMaterial = new THREE.ShaderMaterial({
+            uniforms: { 
+                time: { value: 0 }, 
+                globalOpacity: { value: 1.0 } 
+            },
+            vertexShader: `
+                attribute float size; 
+                attribute vec3 color; 
+                varying vec3 vColor; 
+                uniform float time;
+                void main() {
+                    vColor = color;
+                    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                    // 3D 投影缩放：距离相机越近 (mvPosition.z 越大)，点越大
+                    gl_PointSize = size * (400.0 / -mvPosition.z);
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                varying vec3 vColor; 
+                uniform float globalOpacity;
+                void main() {
+                    // 绘制圆形粒子并加上柔和边缘
+                    vec2 xy = gl_PointCoord.xy - vec2(0.5);
+                    float ll = length(xy);
+                    if (ll > 0.5) discard;
+                    
+                    // 中心亮，边缘暗的径向渐变
+                    float alpha = (1.0 - (ll * 2.0));
+                    // 使用 pow 增加核心亮度锐度
+                    alpha = pow(alpha, 1.2) * globalOpacity;
+                    
+                    gl_FragColor = vec4(vColor, alpha);
+                }
+            `,
+            // 核心视觉需求：叠加发光模式 (类似 Canvas 的 lighter)
+            blending: THREE.AdditiveBlending, 
+            depthWrite: false, 
+            transparent: true
+        });
+
+        const particleSystem = new THREE.Points(geometry, shaderMaterial);
+        scene.add(particleSystem);
+
+        const buttons = document.querySelectorAll('.state-btn');
+        const slider = document.getElementById('volume-slider');
+        const volDisplay = document.getElementById('volume-display');
+
+        buttons.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                // UI 样式切换
+                buttons.forEach(b => { b.classList.remove('active'); b.classList.remove('warm'); });
+                const btnEl = e.target;
+                btnEl.classList.add('active');
+                
+                // 同步状态机
+                currentState = parseInt(btnEl.getAttribute('data-state'));
+                
+                // 同步色彩体系
+                if (currentState === STAGES.PROCESSING || currentState === STAGES.SPEAKING) {
+                    targetHue = COLOR_WARM;
+                    btnEl.classList.add('warm');
+                    volDisplay.style.color = '#ffa500';
+                } else {
+                    targetHue = COLOR_COOL;
+                    volDisplay.style.color = '#00ffff';
+                }
+                
+                // 处理音量滑块的禁用逻辑
+                if (currentState === STAGES.PROCESSING || currentState === STAGES.STANDBY) {
+                    slider.style.opacity = 0.3; slider.style.pointerEvents = 'none';
+                } else {
+                    slider.style.opacity = 1; slider.style.pointerEvents = 'auto';
+                }
+            });
+        });
+
+        // 监听音量输入
+        slider.addEventListener('input', (e) => {
+            if (currentState === STAGES.LISTENING || currentState === STAGES.SPEAKING) {
+                const val = e.target.value;
+                volDisplay.textContent = val;
+                simulatedVolume = val / 100;
+            }
+        });
+
+        // 初始化滑块禁用状态 (因为默认是 State 0)
+        slider.style.opacity = 0.3; slider.style.pointerEvents = 'none';
+
+        const clock = new THREE.Clock();
+
+        // 辅助数学函数：在 3D 空间中根据欧拉角旋转一个点
+        function rotatePoint3D(x, y, z, pitchX, yawZ) {
+            // 先绕 X 轴旋转 (Pitch)
+            let tempY = y * Math.cos(pitchX) - z * Math.sin(pitchX);
+            let tempZ = y * Math.sin(pitchX) + z * Math.cos(pitchX);
+            
+            // 再绕 Z 轴旋转 (Yaw)
+            let finalX = x * Math.cos(yawZ) - tempY * Math.sin(yawZ);
+            let finalY = x * Math.sin(yawZ) + tempY * Math.cos(yawZ);
+            
+            return { x: finalX, y: finalY, z: tempZ };
+        }
+
+        // 辅助数学函数：生成柏林噪声般的有机蠕动偏移量
+        function getOrganicNoise(pData, time) {
+            return Math.sin(pData.spherePhi * 3 + time * 1.5) * 0.5 + 
+                   Math.cos(pData.sphereTheta * 4 + time * 1.2) * 0.5;
+        }
+
+        //        // 新增：伪随机哈希函数，用于生成更不规则的扩散
+        function hash(n) {
+            return Math.sin(n) * 43758.5453123;
+        }
+        function fract(n) {
+             return n - Math.floor(n);
+        }
+        function randomNoise(pData, time, intensity) {
+             // 结合粒子索引和时间生成不规则波动
+             let noise = fract(hash(pData.index + time * 0.1));
+             return (noise - 0.5) * 2.0 * intensity; // -intensity to +intensity
+        }
+
+        function animate() {
+            // 请求下一帧
+            requestAnimationFrame(animate);
+            
+            const dt = clock.getDelta();
+            const time = clock.getElapsedTime();
+            shaderMaterial.uniforms.time.value = time;
+
+            // 获取直接操作底层数组的引用，极致性能
+            const posArr = geometry.attributes.position.array;
+            const colArr = geometry.attributes.color.array;
+            const sizeArr = geometry.attributes.size.array;
+            
+            // 定义当前帧的平滑插值速度 (缓动系数)
+            // 处理中状态需要更高的响应速度来适应飞速的轨道
+            const lerpSpeed = (currentState === STAGES.PROCESSING) ? dt * 12.0 : dt * 5.0; 
+            const colorLerpSpeed = dt * 3.0;
+
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const i3 = i * 3;
+                const p = particleData[i];
+                
+                // 记录本帧该粒子的理想数学目标位置 (tx, ty, tz) 和 目标尺寸 (ts)
+                let tx, ty, tz, ts;
+
+                if (currentState === STAGES.STANDBY) {
+                    // --- State 0: 待机 (平静的致密核心) ---
+                    // 修改：降低中心密集度
+                    const breathe = Math.sin(time * 0.8 + p.noiseOffset) * 0.5;
+                    // baseRadius 增加，使其更分散
+                    const r = (p.baseRadius + 2.5) + breathe; 
+                    
+                    tx = r * Math.cos(p.sphereTheta) * Math.sin(p.spherePhi);
+                    ty = r * Math.sin(p.sphereTheta) * Math.sin(p.spherePhi);
+                    tz = r * Math.cos(p.spherePhi);
+                    // 修改：大幅降低初始大小，减少模糊光晕
+                    ts = 0.6 + (breathe * 0.05);
+
+                } else if (currentState === STAGES.LISTENING) {
+                    // --- State 1: 聆听 (全区域高能脉冲态) ---
+                    const maxExpansion = simulatedVolume * 45.0; // 显著增大基础扩张上限
+                    
+                    // 核心算法重构：平滑的往返运动循环 (Min -> Max -> Min)
+                    // 1. 利用粒子独有的 p.noiseOffset 生成异步的运动速度 (2.0 到 6.0 之间) 和初始相位
+                    const speed = 2.0 + (p.noiseOffset % 4.0); 
+                    
+                    // 2. 生成一个平滑的 0.0 到 1.0 的往返周期
+                    const cycle = (Math.sin(time * speed + p.noiseOffset) + 1.0) * 0.5;
+                    
+                    // 3. 锐化周期：让粒子在核心(最小半径)停留更久，然后像流星一样快速射向最大范围并平滑折返
+                    const roamFactor = Math.pow(cycle, 4.0);
+                    
+                    const dynamicRadius = (p.baseRadius + 2.5) + (roamFactor * maxExpansion);
+
+                    tx = dynamicRadius * Math.cos(p.sphereTheta) * Math.sin(p.spherePhi);
+                    ty = dynamicRadius * Math.sin(p.sphereTheta) * Math.sin(p.spherePhi);
+                    tz = dynamicRadius * Math.cos(p.spherePhi);
+                    
+                    // 强制锁定极小尺寸，保持晶莹剔透的点状
+                    ts = 0.4;
+
+                } else if (currentState === STAGES.PROCESSING) {
+                    // --- State 2: 处理中 (3D 卫星错落环绕) ---
+                    // 不断推进该粒子在其轨道上的角度
+                    p.currentOrbitAngle += p.orbitSpeed * dt;
+                    
+                    // 1. 先计算它在纯平面 (XY) 圆上的坐标
+                    let rawX = Math.cos(p.currentOrbitAngle) * p.orbitRadius;
+                    let rawY = Math.sin(p.currentOrbitAngle) * p.orbitRadius;
+                    // 给轨道增加一点厚度，不要太干瘪
+                    let rawZ = Math.sin(p.currentOrbitAngle * 4 + p.noiseOffset) * 1.5; 
+                    
+                    // 2. 将纯平面坐标依据该轨道专属的倾角 (tiltX, tiltZ) 旋转到三维空间
+                    let rot = rotatePoint3D(rawX, rawY, rawZ, p.tiltX, p.tiltZ);
+                    
+                    tx = rot.x; 
+                    ty = rot.y; 
+                    tz = rot.z;
+                    // 修改：统一缩小卫星尺寸
+                    ts = 1.0 + Math.sin(time * 8 + p.noiseOffset) * 0.5;
+
+                } else if (currentState === STAGES.SPEAKING) {
+                    // --- State 3: 播报 (全区域高能脉冲态，逻辑对齐 State 1) ---
+                    const maxExpansion = simulatedVolume * 55.0; 
+                    
+                    // 逻辑完全对齐 State 1 的往返运动循环
+                    const speed = 2.0 + (p.noiseOffset % 4.0); 
+                    const cycle = (Math.sin(time * speed + p.noiseOffset) + 1.0) * 0.5;
+                    const roamFactor = Math.pow(cycle, 4.0);
+                    
+                    const dynamicRadius = (p.baseRadius + 2.5) + (roamFactor * maxExpansion);
+
+                    tx = dynamicRadius * Math.cos(p.sphereTheta) * Math.sin(p.spherePhi);
+                    ty = dynamicRadius * Math.sin(p.sphereTheta) * Math.sin(p.spherePhi);
+                    tz = dynamicRadius * Math.cos(p.spherePhi);
+                    
+                    // 同样强制锁定极小尺寸
+                    ts = 0.4;
+                }
+
+                // --- 物理平滑：对位置、颜色、尺寸应用 Lerp (线性插值) ---
+                posArr[i3] += (tx - posArr[i3]) * lerpSpeed;
+                posArr[i3+1] += (ty - posArr[i3+1]) * lerpSpeed;
+                posArr[i3+2] += (tz - posArr[i3+2]) * lerpSpeed;
+
+                colArr[i3] += (targetHue.r - colArr[i3]) * colorLerpSpeed;
+                colArr[i3+1] += (targetHue.g - colArr[i3+1]) * colorLerpSpeed;
+                colArr[i3+2] += (targetHue.b - colArr[i3+2]) * colorLerpSpeed;
+                
+                sizeArr[i] += (ts - sizeArr[i]) * (dt * 12);
+            }
+
+            // 通知 GPU 更新缓冲区
+            geometry.attributes.position.needsUpdate = true;
+            geometry.attributes.color.needsUpdate = true;
+            geometry.attributes.size.needsUpdate = true;
+
+            // 全局摄像机视角的轻微漂移，增加空间感
+            if (currentState === STAGES.PROCESSING) {
+                // 处理状态下，整个宇宙缓慢自转
+                particleSystem.rotation.y += dt * 0.15;
+                particleSystem.rotation.x += dt * 0.08;
+            } else {
+                // 其他状态下，缓慢恢复正面视角
+                particleSystem.rotation.y += dt * 0.05;
+                particleSystem.rotation.x += (0 - particleSystem.rotation.x) * (dt * 3);
+            }
+
+            // --- 渲染逻辑 (应用拖尾效果) ---
+            // 1. 渲染带透明度的纯黑平面，覆盖上一帧 (制造残影)
+            renderer.render(fadeScene, camera);
+            // 2. 在其上方叠加绘制当前帧的粒子
+            renderer.render(scene, camera);
+        }
+
+        // 启动引擎
+        animate();
+    </script>
+</body>
+</html>
