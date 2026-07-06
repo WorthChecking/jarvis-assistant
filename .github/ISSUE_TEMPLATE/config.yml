@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 项目讨论与提问
+    url: https://github.com/WorthChecking/jarvis-assistant/discussions
+    about: 使用问题、架构讨论请使用 Discussions
+  - name: 📖 项目文档
+    url: https://github.com/WorthChecking/jarvis-assistant#readme
+    about: 阅读 README 与 PRD 文档后再提问
