@@ -141,7 +141,7 @@ venv\Scripts\activate              # Windows
 pip install -r requirements.txt
 
 # 配置环境变量
-cp .env.example .env               # 填入你的 DeepSeek API Key 等配置
+cp .env.example .env               # 填入你的 API Key 等配置
 
 # 启动 GPT-SoVITS API 服务（独立项目，端口 9880）
 
